@@ -102,7 +102,6 @@ ENV/
 
 .idea/
 .vscode/
-data/
 _data/
 tmp/
 log/
