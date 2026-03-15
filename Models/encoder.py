@@ -75,7 +75,7 @@ class MultiHeadAttention(nn.Module):
             mask = mask.bool()
         attn_mask = mask.unsqueeze(1).expand(-1, length, -1).repeat(self.num_heads, 1, 1)  # [B*h, L, L]
 
-        attn = torch.bmm(q, k.transpose(1, 2))
+        attn = torch.bmm(q, k.transpose(1, 2)) * self.scale
         attn = mask_logits(attn, attn_mask)
         attn = F.softmax(attn, dim=2)
         attn = self.drop(attn)
