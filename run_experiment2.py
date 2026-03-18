@@ -1,18 +1,47 @@
 import os
 import json
 import matplotlib.pyplot as plt
+from EvaluateTools.evaluate import evaluate
 from TrainTools.train import train
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Experiment 2: Effect of Learning-Rate Scheduling on Late-Stage Optimization
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+def run_official_evaluation(train_metrics, save_dir, log_dir):
+    config = train_metrics["config"]
+    ckpt_name = os.path.basename(train_metrics["ckpt_path"])
+
+    return evaluate(
+        dev_npz=config["dev_npz"],
+        word_emb_json=config["word_emb_json"],
+        char_emb_json=config["char_emb_json"],
+        dev_eval_json=config["dev_eval_json"],
+        save_dir=save_dir,
+        log_dir=log_dir,
+        ckpt_name=ckpt_name,
+        batch_size=config["batch_size"],
+        test_num_batches=-1,
+        loss_name=config["loss_name"],
+        para_limit=config["para_limit"],
+        ques_limit=config["ques_limit"],
+        char_limit=config["char_limit"],
+        d_model=config["d_model"],
+        num_heads=config["num_heads"],
+        glove_dim=config["glove_dim"],
+        char_dim=config["char_dim"],
+        dropout=config["dropout"],
+        dropout_char=config["dropout_char"],
+        pretrained_char=config["pretrained_char"],
+    )
+
 def run_experiment2():
     # Experimental conditions
     schedulers_to_test = ["none", "step", "cosine"]
     
     # Controlled Variables
-    num_steps = 5000        # keep the same training budget, adjust if it's too long
+    num_steps = 60000        # keep the same training budget, adjust if it's too long
     seed = 42
     optimizer = "sgd_momentum"
     
@@ -27,9 +56,10 @@ def run_experiment2():
         # We save models to separate folders to avoid overriding
         current_save_dir = f"_model_exp2_{s}"
         current_log_dir = f"_log_exp2_{s}"
-        
+        current_eval_log_dir = os.path.join(current_log_dir, "official_eval")
+
         # Run training
-        metrics = train(
+        train_metrics = train(
             save_dir=current_save_dir,
             log_dir=current_log_dir,
             optimizer_name=optimizer,
@@ -38,23 +68,40 @@ def run_experiment2():
             seed=seed
             # All other parameters are left as default from train.py
         )
-        
+
+        print(f"\nRunning official evaluation for scheduler '{s}'...")
+        eval_metrics = run_official_evaluation(
+            train_metrics=train_metrics,
+            save_dir=current_save_dir,
+            log_dir=current_eval_log_dir,
+        )
+
         results[s] = {
-            "best_f1": metrics["best_f1"],
-            "best_em": metrics["best_em"],
-            "ckpt_path": metrics["ckpt_path"]
+            "best_f1": train_metrics["best_f1"],
+            "best_em": train_metrics["best_em"],
+            "final_eval_f1": eval_metrics["f1"],
+            "final_eval_em": eval_metrics["exact_match"],
+            "final_eval_loss": eval_metrics["loss"],
+            "ckpt_path": train_metrics["ckpt_path"]
         }
-        histories[s] = metrics["history"]
-        
+        histories[s] = train_metrics["history"]
+
         # Save individual experiment history config just in case
         with open(os.path.join(current_log_dir, "history.json"), "w") as f:
-            json.dump(metrics["history"], f, indent=2)
+            json.dump(train_metrics["history"], f, indent=2)
+
+        with open(os.path.join(current_eval_log_dir, "metrics.json"), "w") as f:
+            json.dump(eval_metrics, f, indent=2)
             
     # Save combined results
     print("\nTraining completed.")
     print("Aggregate Results:")
     for s, res in results.items():
-        print(f"  {s}: Best F1 = {res['best_f1']:.4f}, Best EM = {res['best_em']:.4f}")
+        print(
+            f"  {s}: Best F1 = {res['best_f1']:.4f}, Best EM = {res['best_em']:.4f}, "
+            f"Official Eval F1 = {res['final_eval_f1']:.4f}, "
+            f"Official Eval EM = {res['final_eval_em']:.4f}"
+        )
         
     with open("experiment2_results.json", "w") as f:
         json.dump({

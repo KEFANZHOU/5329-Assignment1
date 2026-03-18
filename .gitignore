@@ -103,6 +103,12 @@ ENV/
 .idea/
 .vscode/
 _data/
+!_data/
+!_data/glove/
+!_data/glove/glove.mini.txt
+!_data/squad/
+!_data/squad/train-mini.json
+!_data/squad/dev-v1.1.json
 tmp/
 log/
 model/

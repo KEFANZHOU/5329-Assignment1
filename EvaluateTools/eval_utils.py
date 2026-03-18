@@ -80,9 +80,47 @@ def convert_tokens(eval_file, qa_id, pp1, pp2):
     return answer_dict, remapped_dict
 
 
+def select_best_spans(p1, p2, max_answer_len=30):
+    """Decode the best legal answer span for each sample in a batch.
+
+    Args:
+        p1, p2:
+            [B, L] tensors of start/end log-probabilities.
+        max_answer_len:
+            Maximum allowed answer length in tokens.
+
+    Returns:
+        Two Python lists containing the chosen start and end indices.
+    """
+    batch_size, seq_len = p1.size()
+    device = p1.device
+
+    start_positions = []
+    end_positions = []
+
+    index = torch.arange(seq_len, device=device)
+    legal_spans = (index.unsqueeze(1) <= index.unsqueeze(0))
+    if max_answer_len is not None and max_answer_len > 0:
+        legal_spans &= (index.unsqueeze(0) - index.unsqueeze(1)) < max_answer_len
+
+    for b in range(batch_size):
+        span_scores = p1[b].unsqueeze(1) + p2[b].unsqueeze(0)
+        span_scores = span_scores.masked_fill(~legal_spans, float("-inf"))
+
+        best_flat = torch.argmax(span_scores.view(-1))
+        start_idx = int(best_flat // seq_len)
+        end_idx = int(best_flat % seq_len)
+
+        start_positions.append(start_idx)
+        end_positions.append(end_idx)
+
+    return start_positions, end_positions
+
+
 @torch.no_grad()
 def run_eval(model, dataset, eval_file, num_batches, batch_size,
-             use_random_batches, device, loss_fn=qa_nll_loss):
+             use_random_batches, device, loss_fn=qa_nll_loss,
+             max_answer_len=30):
     loader = make_loader(dataset, batch_size, shuffle=use_random_batches)
     # num_batches=-1 means evaluate the full dataset
     batch_limit = None if num_batches < 0 else num_batches
@@ -104,13 +142,9 @@ def run_eval(model, dataset, eval_file, num_batches, batch_size,
         loss = loss_fn(p1, p2, y1, y2)
         losses.append(float(loss.item()))
 
-        yp1 = torch.argmax(p1, dim=1)
-        yp2 = torch.argmax(p2, dim=1)
-        yps = torch.stack([yp1, yp2], dim=1)
-        ymin, _ = torch.min(yps, dim=1)
-        ymax, _ = torch.max(yps, dim=1)
+        ymin, ymax = select_best_spans(p1, p2, max_answer_len=max_answer_len)
 
-        answer_dict_, _ = convert_tokens(eval_file, ids.tolist(), ymin.tolist(), ymax.tolist())
+        answer_dict_, _ = convert_tokens(eval_file, ids.tolist(), ymin, ymax)
         answer_dict.update(answer_dict_)
 
     metrics = squad_evaluate(eval_file, answer_dict)
