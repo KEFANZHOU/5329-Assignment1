@@ -37,6 +37,7 @@ def train(
     save_dir:           str   = "_model",
     log_dir:            str   = "_log",
     ckpt_name:          str   = "model.pt",
+    best_ckpt_name:     str   = "best_model.pt",
 
     # ── Training loop ─────────────────────────────────────────────────────────
     batch_size:         int   = 8,
@@ -90,12 +91,14 @@ def train(
     Returns
     -------
     dict with keys:
-        best_f1   : float       — best dev F1 across all checkpoints
-        best_em   : float       — best dev EM across all checkpoints
+        best_f1   : float       — dev F1 of the selected best checkpoint
+        best_em   : float       — dev EM of the selected best checkpoint
+        best_step : int         — training step of the selected best checkpoint
         history   : list[dict]  — per-checkpoint metrics
             keys: step, train_loss, train_f1, train_em,
                   dev_loss, dev_f1, dev_em, lr
-        ckpt_path : str         — absolute path to the saved checkpoint
+        ckpt_path : str         — absolute path to the latest checkpoint
+        best_ckpt_path : str    — absolute path to the best checkpoint
         config    : dict        — full resolved configuration
     """
     set_seed(seed)
@@ -144,8 +147,9 @@ def train(
     scheduler = schedulers[scheduler_name](optimizer, args)
     loss_fn   = losses[loss_name]
 
-    best_f1  = 0.0
-    best_em  = 0.0
+    best_f1  = float("-inf")
+    best_em  = float("-inf")
+    best_step = 0
     patience = 0
     history  = []
 
@@ -190,21 +194,30 @@ def train(
 
         dev_f1 = dv_metrics["f1"]
         dev_em = dv_metrics["exact_match"]
+        current_step = step0 + steps_this_block
+        is_best = (dev_f1 > best_f1) or (dev_f1 == best_f1 and dev_em > best_em)
 
-        if dev_f1 < best_f1 and dev_em < best_em:
+        if is_best:
+            patience = 0
+            best_f1 = dev_f1
+            best_em = dev_em
+            best_step = current_step
+        else:
             patience += 1
             if patience > early_stop:
                 print("Early stopping triggered.")
                 break
-        else:
-            patience = 0
-            best_f1  = max(best_f1, dev_f1)
-            best_em  = max(best_em, dev_em)
 
         save_checkpoint(
             save_dir, ckpt_name, model, optimizer, scheduler,
-            step0 + steps_this_block, best_f1, best_em, vars(args),
+            current_step, best_f1, best_em, vars(args),
         )
+
+        if is_best:
+            save_checkpoint(
+                save_dir, best_ckpt_name, model, optimizer, scheduler,
+                current_step, best_f1, best_em, vars(args),
+            )
 
         with open(os.path.join(log_dir, "answers.json"), "w") as f:
             json.dump(ans, f)
@@ -214,7 +227,9 @@ def train(
     return {
         "best_f1":   best_f1,
         "best_em":   best_em,
+        "best_step": best_step,
         "history":   history,
         "ckpt_path": os.path.abspath(os.path.join(save_dir, ckpt_name)),
+        "best_ckpt_path": os.path.abspath(os.path.join(save_dir, best_ckpt_name)),
         "config":    vars(args),
     }

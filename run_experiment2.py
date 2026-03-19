@@ -11,7 +11,7 @@ from TrainTools.train import train
 
 def run_official_evaluation(train_metrics, save_dir, log_dir):
     config = train_metrics["config"]
-    ckpt_name = os.path.basename(train_metrics["ckpt_path"])
+    ckpt_name = os.path.basename(train_metrics["best_ckpt_path"])
 
     return evaluate(
         dev_npz=config["dev_npz"],
@@ -79,10 +79,12 @@ def run_experiment2():
         results[s] = {
             "best_f1": train_metrics["best_f1"],
             "best_em": train_metrics["best_em"],
+            "best_step": train_metrics["best_step"],
             "final_eval_f1": eval_metrics["f1"],
             "final_eval_em": eval_metrics["exact_match"],
             "final_eval_loss": eval_metrics["loss"],
-            "ckpt_path": train_metrics["ckpt_path"]
+            "ckpt_path": train_metrics["ckpt_path"],
+            "best_ckpt_path": train_metrics["best_ckpt_path"],
         }
         histories[s] = train_metrics["history"]
 
@@ -98,7 +100,8 @@ def run_experiment2():
     print("Aggregate Results:")
     for s, res in results.items():
         print(
-            f"  {s}: Best F1 = {res['best_f1']:.4f}, Best EM = {res['best_em']:.4f}, "
+            f"  {s}: Best Step = {res['best_step']}, "
+            f"Best F1 = {res['best_f1']:.4f}, Best EM = {res['best_em']:.4f}, "
             f"Official Eval F1 = {res['final_eval_f1']:.4f}, "
             f"Official Eval EM = {res['final_eval_em']:.4f}"
         )
