@@ -52,6 +52,11 @@ def evaluate(
     dropout:        float = 0.1,
     dropout_char:   float = 0.05,
     pretrained_char: bool = False,
+    norm_name:      str   = "layer_norm",
+    norm_groups:    int   = 8,
+    activation:     str   = "relu",
+    init_name:      str   = "kaiming",
+    use_batch_norm: bool  = False,
 ) -> dict:
     """Evaluate a saved QANet checkpoint on the SQuAD v1.1 dev set.
 
@@ -76,9 +81,11 @@ def evaluate(
     loss_name:
         Loss function key from the registry (default ``"qa_nll"``).
     para_limit, ques_limit, char_limit, d_model, num_heads,
-    glove_dim, char_dim, dropout, dropout_char, pretrained_char:
-        Model architecture parameters — must match the values used during
-        training.
+    glove_dim, char_dim, dropout, dropout_char, pretrained_char,
+    norm_name, norm_groups, activation, init_name, use_batch_norm:
+        Model / architecture parameters. When the checkpoint contains a
+        saved ``config``, those values are used by default so evaluation
+        rebuilds the same model that was trained.
 
     Returns
     -------
@@ -87,35 +94,70 @@ def evaluate(
     """
     os.makedirs(log_dir, exist_ok=True)
 
-    if loss_name not in losses:
-        raise ValueError(f"Unknown loss '{loss_name}'. Available: {list(losses.keys())}")
+    ckpt_path = os.path.join(save_dir, ckpt_name)
+    ckpt = torch.load(ckpt_path, map_location=DEVICE)
+    ckpt_cfg = ckpt.get("config", {})
 
-    # Build a lightweight namespace so existing helpers can consume it
+    resolved_loss_name = loss_name if loss_name != "qa_nll" else ckpt_cfg.get("loss_name", loss_name)
+    if resolved_loss_name not in losses:
+        raise ValueError(f"Unknown loss '{resolved_loss_name}'. Available: {list(losses.keys())}")
+
+    default_values = {
+        "dev_npz": "_data/dev.npz",
+        "word_emb_json": "_data/word_emb.json",
+        "char_emb_json": "_data/char_emb.json",
+        "dev_eval_json": "_data/dev_eval.json",
+        "para_limit": 400,
+        "ques_limit": 50,
+        "char_limit": 16,
+        "d_model": 96,
+        "num_heads": 8,
+        "glove_dim": 300,
+        "char_dim": 64,
+        "dropout": 0.1,
+        "dropout_char": 0.05,
+        "pretrained_char": False,
+        "norm_name": "layer_norm",
+        "norm_groups": 8,
+        "activation": "relu",
+        "init_name": "kaiming",
+        "use_batch_norm": False,
+    }
+
+    def resolve(name, value):
+        if value != default_values[name]:
+            return value
+        return ckpt_cfg.get(name, value)
+
+    # Prefer the checkpoint config so evaluation reconstructs the trained model.
     args = argparse.Namespace(
-        dev_npz=dev_npz,
-        word_emb_json=word_emb_json,
-        char_emb_json=char_emb_json,
-        dev_eval_json=dev_eval_json,
-        para_limit=para_limit,
-        ques_limit=ques_limit,
-        char_limit=char_limit,
-        d_model=d_model,
-        num_heads=num_heads,
-        glove_dim=glove_dim,
-        char_dim=char_dim,
-        dropout=dropout,
-        dropout_char=dropout_char,
-        pretrained_char=pretrained_char,
+        dev_npz=resolve("dev_npz", dev_npz),
+        word_emb_json=resolve("word_emb_json", word_emb_json),
+        char_emb_json=resolve("char_emb_json", char_emb_json),
+        dev_eval_json=resolve("dev_eval_json", dev_eval_json),
+        para_limit=resolve("para_limit", para_limit),
+        ques_limit=resolve("ques_limit", ques_limit),
+        char_limit=resolve("char_limit", char_limit),
+        d_model=resolve("d_model", d_model),
+        num_heads=resolve("num_heads", num_heads),
+        glove_dim=resolve("glove_dim", glove_dim),
+        char_dim=resolve("char_dim", char_dim),
+        dropout=resolve("dropout", dropout),
+        dropout_char=resolve("dropout_char", dropout_char),
+        pretrained_char=resolve("pretrained_char", pretrained_char),
+        norm_name=resolve("norm_name", norm_name),
+        norm_groups=resolve("norm_groups", norm_groups),
+        activation=resolve("activation", activation),
+        init_name=resolve("init_name", init_name),
+        use_batch_norm=resolve("use_batch_norm", use_batch_norm),
     )
 
     word_mat, char_mat = load_word_char_mats(args)
     model = QANet(word_mat, char_mat, args).to(DEVICE)
 
     dev_eval = load_dev_eval(args)
-    dev_dataset = SQuADDataset(dev_npz)
+    dev_dataset = SQuADDataset(args.dev_npz)
 
-    ckpt_path = os.path.join(save_dir, ckpt_name)
-    ckpt = torch.load(ckpt_path, map_location=DEVICE)
     model.load_state_dict(ckpt["model_state"])
 
     metrics, ans = run_eval(
@@ -124,7 +166,7 @@ def evaluate(
         batch_size=batch_size,
         use_random_batches=False,
         device=DEVICE,
-        loss_fn=losses[loss_name],
+        loss_fn=losses[resolved_loss_name],
     )
 
     with open(os.path.join(log_dir, "answers.json"), "w") as f:
