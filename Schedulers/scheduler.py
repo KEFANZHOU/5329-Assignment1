@@ -1,5 +1,5 @@
 from Schedulers.cosine_scheduler import CosineAnnealingLR
-from Schedulers.lambda_scheduler import LambdaLR
+from Schedulers.lambda_scheduler import LambdaLR, make_warmup_lambda
 from Schedulers.step_scheduler import StepLR
 
 
@@ -23,8 +23,14 @@ def step_scheduler(optimizer, args):
 
 
 def lambda_scheduler(optimizer, args):
-    """LambdaLR with a constant factor of 1.0 — learning rate stays fixed."""
-    return LambdaLR(optimizer, lr_lambda=lambda _: 1.0)
+    """Linear warmup to args.learning_rate, then inverse-sqrt decay."""
+    return LambdaLR(
+        optimizer,
+        lr_lambda=make_warmup_lambda(
+            peak_lr=getattr(args, "learning_rate", 1e-3),
+            warmup_steps=getattr(args, "warmup_steps", 4000),
+        ),
+    )
 
 class NoOpScheduler:
     """No operation scheduler."""

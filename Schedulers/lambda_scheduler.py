@@ -21,3 +21,23 @@ class LambdaLR(LRScheduler):
         t = self.last_epoch
         factor = self.lr_lambda(t)
         return [base_lr * factor for base_lr in self.base_lrs]
+
+
+def make_warmup_lambda(peak_lr: float, warmup_steps: int):
+    """Return a warmup + inverse-sqrt decay schedule.
+
+    The returned callable emits the effective learning rate directly. It is
+    intended to be paired with optimizers whose base learning rate is 1.0.
+    """
+    if peak_lr <= 0.0:
+        raise ValueError(f"peak_lr must be positive, got {peak_lr}")
+    if warmup_steps <= 0:
+        raise ValueError(f"warmup_steps must be positive, got {warmup_steps}")
+
+    def lr_lambda(step: int) -> float:
+        step = max(1, step)
+        if step <= warmup_steps:
+            return peak_lr * step / warmup_steps
+        return peak_lr * (warmup_steps ** 0.5) / (step ** 0.5)
+
+    return lr_lambda

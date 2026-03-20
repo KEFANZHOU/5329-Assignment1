@@ -6,7 +6,7 @@ from Optimizers.sgd_momentum import SGDMomentum
 # ── Optimizer factories ──────────────────────────────────────────────────────
 #
 # NOTE: `adam` sets lr=1.0 because its learning rate is entirely controlled by
-# the paired `warmup_lambda` scheduler (which outputs the actual lr values).
+# the paired `lambda` scheduler (which outputs the actual lr values).
 # `sgd` and `sgd_momentum` use args.learning_rate directly and should be
 # paired with `cosine` or `step` schedulers.
 

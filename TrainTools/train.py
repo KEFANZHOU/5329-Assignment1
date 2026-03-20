@@ -67,6 +67,7 @@ def train(
     # ── Scheduler hyperparameters ─────────────────────────────────────────────
     lr_step_size:       int   = 10000,  # step: decay every n steps
     lr_gamma:           float = 0.5,    # step: multiplicative decay factor
+    warmup_steps:       int   = 4000,   # lambda: linear warmup length
 
     # ── Model architecture ────────────────────────────────────────────────────
     para_limit:         int   = 400,
