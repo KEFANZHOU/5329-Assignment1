@@ -2,20 +2,16 @@ import csv
 import json
 import os
 from statistics import pstdev
-from typing import Any, Dict, List, Optional
+from typing import Dict, Any, List, Optional
 
-from EvaluateTools.evaluate import evaluate
 from TrainTools.train import train
+from EvaluateTools.evaluate import evaluate
 from experiment_report_utils import (
     DEFAULT_RESULT_COLUMNS,
     plot_standard_history_bundle,
     print_table,
     read_json,
 )
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Experiment 2: Effect of Learning-Rate Scheduling on Late-Stage Optimization
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _mkdir(path: str) -> str:
@@ -38,7 +34,11 @@ def _write_csv(path: str, rows: List[Dict[str, Any]]) -> None:
 
 
 def _get_series(hist: List[Dict[str, Any]], key: str) -> List[Any]:
-    return [row[key] for row in hist if key in row and row[key] is not None]
+    out = []
+    for row in hist:
+        if key in row and row[key] is not None:
+            out.append(row[key])
+    return out
 
 
 def _safe_std(values: List[float]) -> Optional[float]:
@@ -100,36 +100,50 @@ def run_official_evaluation(
     )
 
 
-def run_experiment2(
-    output_root: str = "exp_outputs/experiment2_scheduler",
+def run_experiment1_norm_in_assignment(
+    output_root: str = "exp_outputs/experiment1_norm",
+    train_npz: str = "_data/train.npz",
+    dev_npz: str = "_data/dev.npz",
+    word_emb_json: str = "_data/word_emb.json",
+    char_emb_json: str = "_data/char_emb.json",
+    train_eval_json: str = "_data/train_eval.json",
+    dev_eval_json: str = "_data/dev_eval.json",
     num_steps: int = 60000,
     checkpoint: int = 200,
     batch_size: int = 8,
     seed: int = 42,
-    optimizer_name: str = "sgd_momentum",
+    optimizer_name: str = "sgd",
+    scheduler_name: str = "none",
     loss_name: str = "qa_nll",
-    schedulers_to_test: Optional[List[str]] = None,
-    lr_step_size: int = 5000,
-    lr_gamma: float = 0.5,
+    norm_groups: int = 8,
     plot_results: bool = False,
-):
-    if schedulers_to_test is None:
-        schedulers_to_test = ["none", "step", "cosine"]
-
+) -> Dict[str, Any]:
+    """
+    Experiment 1:
+    Compare LayerNorm vs GroupNorm under the same training recipe used in Experiment 2.
+    """
     output_root = _mkdir(output_root)
 
     experiment_spec = {
-        "title": "Experiment 2: Effect of Learning-Rate Scheduling on Late-Stage Optimization",
-        "conditions": schedulers_to_test,
+        "title": "Experiment 1: Effect of Normalization Strategy",
+        "based_on": "same training-and-evaluation workflow as run_experiment2.py",
+        "research_question": (
+            "Under the same optimizer, scheduler, data split, and training budget, "
+            "do LayerNorm and GroupNorm affect training stability and final performance differently?"
+        ),
+        "hypothesis": (
+            "LayerNorm is expected to outperform GroupNorm because it is more naturally "
+            "aligned with token-level feature normalization and may yield more stable optimization."
+        ),
+        "conditions": ["layer_norm", "group_norm"],
         "controlled_variables": {
             "optimizer_name": optimizer_name,
+            "scheduler_name": scheduler_name,
             "loss_name": loss_name,
             "batch_size": batch_size,
             "num_steps": num_steps,
             "checkpoint": checkpoint,
             "seed": seed,
-            "lr_step_size": lr_step_size,
-            "lr_gamma": lr_gamma,
             "same_official_eval": True,
             "same_data": True,
             "same_model_size": True,
@@ -149,100 +163,118 @@ def run_experiment2(
             "first_step_dev_f1_ge_3",
             "step_of_best_logged_dev_f1",
         ],
+        "analysis_focus": [
+            "Which normalization converges more stably",
+            "Which normalization reaches effective learning earlier",
+            "Which normalization achieves higher final Dev F1 / EM",
+            "Whether the difference mainly appears in optimization dynamics or final generalization",
+        ],
     }
     _write_json(os.path.join(output_root, "experiment_spec.json"), experiment_spec)
 
-    results: Dict[str, Dict[str, Any]] = {}
-    histories: Dict[str, List[Dict[str, Any]]] = {}
+    conditions = {
+        "layer_norm": {"norm_name": "layer_norm", "norm_groups": norm_groups},
+        "group_norm": {"norm_name": "group_norm", "norm_groups": norm_groups},
+    }
 
-    for scheduler_name in schedulers_to_test:
-        print(f"\n=======================================================")
-        print(f" Starting Experiment Group: {optimizer_name} + scheduler '{scheduler_name}' ")
-        print(f"=======================================================\n")
+    all_histories: Dict[str, List[Dict[str, Any]]] = {}
+    summary: Dict[str, Dict[str, Any]] = {}
 
-        cond_dir = _mkdir(os.path.join(output_root, scheduler_name))
-        current_save_dir = _mkdir(os.path.join(cond_dir, "checkpoints"))
-        current_log_dir = _mkdir(os.path.join(cond_dir, "train_logs"))
-        current_eval_log_dir = _mkdir(os.path.join(cond_dir, "official_eval"))
+    for cond_name, cond_cfg in conditions.items():
+        print("\n" + "=" * 80)
+        print(f"Running condition: {cond_name}")
+        print("=" * 80)
 
-        train_metrics = train(
-            save_dir=current_save_dir,
-            log_dir=current_log_dir,
+        cond_dir = _mkdir(os.path.join(output_root, cond_name))
+        save_dir = _mkdir(os.path.join(cond_dir, "checkpoints"))
+        train_log_dir = _mkdir(os.path.join(cond_dir, "train_logs"))
+        eval_log_dir = _mkdir(os.path.join(cond_dir, "eval_logs"))
+
+        train_result = train(
+            train_npz=train_npz,
+            dev_npz=dev_npz,
+            word_emb_json=word_emb_json,
+            char_emb_json=char_emb_json,
+            train_eval_json=train_eval_json,
+            dev_eval_json=dev_eval_json,
+            save_dir=save_dir,
+            log_dir=train_log_dir,
+            ckpt_name="model.pt",
+            num_steps=num_steps,
+            batch_size=batch_size,
+            checkpoint=checkpoint,
+            seed=seed,
             optimizer_name=optimizer_name,
             scheduler_name=scheduler_name,
             loss_name=loss_name,
-            num_steps=num_steps,
-            checkpoint=checkpoint,
-            batch_size=batch_size,
-            seed=seed,
-            lr_step_size=lr_step_size,
-            lr_gamma=lr_gamma,
+            norm_name=cond_cfg["norm_name"],
+            norm_groups=cond_cfg["norm_groups"],
         )
 
-        print(f"\nRunning official evaluation for scheduler '{scheduler_name}'...")
-        eval_metrics = run_official_evaluation(
-            train_metrics=train_metrics,
-            save_dir=current_save_dir,
-            log_dir=current_eval_log_dir,
-        )
-
-        history = train_metrics.get("history", [])
-        histories[scheduler_name] = history
+        history = train_result.get("history", [])
+        all_histories[cond_name] = history
 
         _write_json(os.path.join(cond_dir, "history.json"), history)
         _write_csv(os.path.join(cond_dir, "history.csv"), history)
-        _write_json(os.path.join(cond_dir, "train_return.json"), train_metrics)
-        _write_json(os.path.join(current_eval_log_dir, "metrics.json"), eval_metrics)
+        _write_json(os.path.join(cond_dir, "train_return.json"), train_result)
+
+        print(f"\nRunning official evaluation for normalization '{cond_name}'...")
+        eval_result = run_official_evaluation(
+            train_metrics=train_result,
+            save_dir=save_dir,
+            log_dir=eval_log_dir,
+        )
 
         dev_f1_series = _get_series(history, "dev_f1")
         dev_loss_series = _get_series(history, "dev_loss")
         train_loss_series = _get_series(history, "train_loss")
 
-        results[scheduler_name] = {
-            "condition": scheduler_name,
-            "optimizer_name": optimizer_name,
-            "scheduler_name": scheduler_name,
-            "best_f1_during_training": train_metrics["best_f1"],
-            "best_em_during_training": train_metrics["best_em"],
-            "best_step_during_training": train_metrics.get("best_step"),
-            "official_eval_f1": eval_metrics["f1"],
-            "official_eval_em": eval_metrics["exact_match"],
-            "official_eval_loss": eval_metrics["loss"],
+        summary_item = {
+            "condition": cond_name,
+            "norm_name": cond_cfg["norm_name"],
+            "norm_groups": cond_cfg["norm_groups"],
+
+            "best_f1_during_training": float(train_result["best_f1"]) if "best_f1" in train_result else None,
+            "best_em_during_training": float(train_result["best_em"]) if "best_em" in train_result else None,
+            "best_step_during_training": train_result.get("best_step"),
+
+            "official_eval_f1": eval_result["f1"],
+            "official_eval_em": eval_result["exact_match"],
+            "official_eval_loss": eval_result["loss"],
+
             "first_logged_train_loss": train_loss_series[0] if train_loss_series else None,
             "last_logged_train_loss": train_loss_series[-1] if train_loss_series else None,
+
             "first_logged_dev_f1": dev_f1_series[0] if dev_f1_series else None,
             "last_logged_dev_f1": dev_f1_series[-1] if dev_f1_series else None,
             "best_logged_dev_f1": max(dev_f1_series) if dev_f1_series else None,
             "step_of_best_logged_dev_f1": _step_of_best(history, "dev_f1", mode="max"),
-            "best_logged_dev_em": max(_get_series(history, "dev_em")) if _get_series(history, "dev_em") else None,
-            "step_of_best_logged_dev_em": _step_of_best(history, "dev_em", mode="max"),
-            "best_logged_dev_loss": min(dev_loss_series) if dev_loss_series else None,
-            "step_of_best_logged_dev_loss": _step_of_best(history, "dev_loss", mode="min"),
+
             "first_step_dev_f1_ge_1": _first_step_meeting(history, "dev_f1", 1.0),
             "first_step_dev_f1_ge_3": _first_step_meeting(history, "dev_f1", 3.0),
+
+            "best_logged_dev_em": max(_get_series(history, "dev_em")) if _get_series(history, "dev_em") else None,
+            "step_of_best_logged_dev_em": _step_of_best(history, "dev_em", mode="max"),
+
+            "best_logged_dev_loss": min(dev_loss_series) if dev_loss_series else None,
+            "step_of_best_logged_dev_loss": _step_of_best(history, "dev_loss", mode="min"),
+
             "dev_f1_std": _safe_std(dev_f1_series),
             "dev_loss_std": _safe_std(dev_loss_series),
-            "history_path": os.path.join(cond_dir, "history.json"),
-            "checkpoint_path": train_metrics.get("best_ckpt_path", os.path.join(current_save_dir, "best_model.pt")),
-            "last_checkpoint_path": train_metrics.get("ckpt_path", os.path.join(current_save_dir, "model.pt")),
-        }
-        _write_json(os.path.join(cond_dir, "summary.json"), results[scheduler_name])
 
-    print("\nTraining completed.")
-    print("Aggregate Results:")
-    for scheduler_name, res in results.items():
-        print(
-            f"  {scheduler_name}: Best F1 = {res['best_f1_during_training']:.4f}, "
-            f"Best EM = {res['best_em_during_training']:.4f}, "
-            f"Official Eval F1 = {res['official_eval_f1']:.4f}, "
-            f"Official Eval EM = {res['official_eval_em']:.4f}"
-        )
+            "history_path": os.path.join(cond_dir, "history.json"),
+            "checkpoint_path": train_result.get("best_ckpt_path", os.path.join(save_dir, "best_model.pt")),
+            "last_checkpoint_path": train_result.get("ckpt_path", os.path.join(save_dir, "model.pt")),
+        }
+
+        summary[cond_name] = summary_item
+        _write_json(os.path.join(cond_dir, "summary.json"), summary_item)
 
     comparison_rows = []
-    for scheduler_name, item in results.items():
+    for cond_name, item in summary.items():
         comparison_rows.append(
             {
-                "condition": scheduler_name,
+                "condition": cond_name,
                 "best_f1_during_training": item["best_f1_during_training"],
                 "best_em_during_training": item["best_em_during_training"],
                 "best_step_during_training": item["best_step_during_training"],
@@ -263,50 +295,47 @@ def run_experiment2(
         key=lambda x: (-float("-inf") if x["official_eval_f1"] is None else -x["official_eval_f1"])
     )
 
-    summary_payload: Dict[str, Any] = dict(results)
+    _write_csv(os.path.join(output_root, "comparison.csv"), comparison_rows)
+    _write_json(os.path.join(output_root, "histories.json"), all_histories)
+    _write_json(os.path.join(output_root, "summary.json"), summary)
+
     if len(comparison_rows) >= 2:
-        summary_payload["_ranking"] = {
-            "winner_by_official_eval_f1": comparison_rows[0]["condition"],
+        winner = comparison_rows[0]["condition"]
+        summary["_ranking"] = {
+            "winner_by_official_eval_f1": winner,
             "ordered_conditions": [row["condition"] for row in comparison_rows],
         }
+        _write_json(os.path.join(output_root, "summary.json"), summary)
 
     print_table(
-        "Experiment 2 Results",
+        "Experiment 1 Results",
         comparison_rows,
         DEFAULT_RESULT_COLUMNS,
     )
 
-    _write_json(os.path.join(output_root, "summary.json"), summary_payload)
-    _write_json(os.path.join(output_root, "histories.json"), histories)
-    _write_json(os.path.join(output_root, "experiment2_results.json"), {
-        "summary": summary_payload,
-        "histories": histories,
-        "comparison_rows": comparison_rows,
-    })
-    _write_csv(os.path.join(output_root, "comparison.csv"), comparison_rows)
-
     if plot_results:
-        plot_experiment2_results(output_root=output_root, histories=histories)
+        plot_experiment1_results(output_root=output_root, histories=all_histories)
 
-    print(f"Saved experiment outputs to {output_root}")
+    print("\nExperiment 1 finished.")
+    print(json.dumps(summary, indent=2))
     return {
-        "summary": summary_payload,
-        "histories": histories,
-        "comparison_rows": comparison_rows,
+        "summary": summary,
+        "histories": all_histories,
         "output_root": output_root,
+        "comparison_rows": comparison_rows,
     }
 
 
-def plot_experiment2_results(
-    output_root: str = "exp_outputs/experiment2_scheduler",
+def plot_experiment1_results(
+    output_root: str = "exp_outputs/experiment1_norm",
     histories: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> None:
     if histories is None:
         histories = read_json(os.path.join(output_root, "histories.json"))
 
     plot_standard_history_bundle(output_root=output_root, histories=histories)
-    print(f"Saved experiment 2 plots to {output_root}")
+    print(f"Saved experiment 1 plots to {output_root}")
 
 
 if __name__ == "__main__":
-    run_experiment2()
+    run_experiment1_norm_in_assignment()

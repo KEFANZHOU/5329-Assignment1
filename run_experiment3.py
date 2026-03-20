@@ -14,7 +14,7 @@ from experiment_report_utils import (
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Experiment 2: Effect of Learning-Rate Scheduling on Late-Stage Optimization
+# Experiment 3: Effect of Weight Initialization
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -100,36 +100,41 @@ def run_official_evaluation(
     )
 
 
-def run_experiment2(
-    output_root: str = "exp_outputs/experiment2_scheduler",
+def run_experiment3(
+    output_root: str = "exp_outputs/experiment3_init",
     num_steps: int = 60000,
     checkpoint: int = 200,
     batch_size: int = 8,
     seed: int = 42,
-    optimizer_name: str = "sgd_momentum",
-    loss_name: str = "qa_nll",
-    schedulers_to_test: Optional[List[str]] = None,
-    lr_step_size: int = 5000,
-    lr_gamma: float = 0.5,
+    optimizer_name: str = "adam",
+    scheduler_name: str = "lambda",
+    loss_name: str = "qa_ce",
+    activation: str = "relu",
+    init_names: Optional[List[str]] = None,
     plot_results: bool = False,
-):
-    if schedulers_to_test is None:
-        schedulers_to_test = ["none", "step", "cosine"]
+) -> Dict[str, Any]:
+    if init_names is None:
+        init_names = ["kaiming", "xavier"]
 
     output_root = _mkdir(output_root)
 
     experiment_spec = {
-        "title": "Experiment 2: Effect of Learning-Rate Scheduling on Late-Stage Optimization",
-        "conditions": schedulers_to_test,
+        "title": "Experiment 3: Effect of Weight Initialization",
+        "research_question": (
+            "With activation, optimizer, scheduler, loss, and all other hyperparameters fixed, "
+            "does Kaiming initialization or Xavier initialization lead to better training dynamics "
+            "and final QA performance?"
+        ),
+        "conditions": init_names,
         "controlled_variables": {
             "optimizer_name": optimizer_name,
+            "scheduler_name": scheduler_name,
             "loss_name": loss_name,
+            "activation": activation,
             "batch_size": batch_size,
             "num_steps": num_steps,
             "checkpoint": checkpoint,
             "seed": seed,
-            "lr_step_size": lr_step_size,
-            "lr_gamma": lr_gamma,
             "same_official_eval": True,
             "same_data": True,
             "same_model_size": True,
@@ -142,72 +147,79 @@ def run_experiment2(
             "official_eval_f1",
             "official_eval_em",
             "official_eval_loss",
-            "train_f1_minus_dev_f1",
             "dev_f1_std",
             "dev_loss_std",
             "first_step_dev_f1_ge_1",
             "first_step_dev_f1_ge_3",
             "step_of_best_logged_dev_f1",
         ],
+        "notes": {
+            "project_loss_name_for_cross_entropy": "qa_ce",
+            "compared_initializations": init_names,
+        },
     }
     _write_json(os.path.join(output_root, "experiment_spec.json"), experiment_spec)
 
     results: Dict[str, Dict[str, Any]] = {}
     histories: Dict[str, List[Dict[str, Any]]] = {}
 
-    for scheduler_name in schedulers_to_test:
-        print(f"\n=======================================================")
-        print(f" Starting Experiment Group: {optimizer_name} + scheduler '{scheduler_name}' ")
-        print(f"=======================================================\n")
+    for init_name in init_names:
+        print("\n" + "=" * 80)
+        print(f"Running condition: init = {init_name}")
+        print("=" * 80)
 
-        cond_dir = _mkdir(os.path.join(output_root, scheduler_name))
-        current_save_dir = _mkdir(os.path.join(cond_dir, "checkpoints"))
-        current_log_dir = _mkdir(os.path.join(cond_dir, "train_logs"))
-        current_eval_log_dir = _mkdir(os.path.join(cond_dir, "official_eval"))
+        cond_dir = _mkdir(os.path.join(output_root, init_name))
+        save_dir = _mkdir(os.path.join(cond_dir, "checkpoints"))
+        train_log_dir = _mkdir(os.path.join(cond_dir, "train_logs"))
+        eval_log_dir = _mkdir(os.path.join(cond_dir, "official_eval"))
 
-        train_metrics = train(
-            save_dir=current_save_dir,
-            log_dir=current_log_dir,
+        train_result = train(
+            save_dir=save_dir,
+            log_dir=train_log_dir,
+            ckpt_name="model.pt",
+            num_steps=num_steps,
+            batch_size=batch_size,
+            checkpoint=checkpoint,
+            seed=seed,
             optimizer_name=optimizer_name,
             scheduler_name=scheduler_name,
             loss_name=loss_name,
-            num_steps=num_steps,
-            checkpoint=checkpoint,
-            batch_size=batch_size,
-            seed=seed,
-            lr_step_size=lr_step_size,
-            lr_gamma=lr_gamma,
+            activation=activation,
+            init_name=init_name,
         )
 
-        print(f"\nRunning official evaluation for scheduler '{scheduler_name}'...")
-        eval_metrics = run_official_evaluation(
-            train_metrics=train_metrics,
-            save_dir=current_save_dir,
-            log_dir=current_eval_log_dir,
-        )
-
-        history = train_metrics.get("history", [])
-        histories[scheduler_name] = history
+        history = train_result.get("history", [])
+        histories[init_name] = history
 
         _write_json(os.path.join(cond_dir, "history.json"), history)
         _write_csv(os.path.join(cond_dir, "history.csv"), history)
-        _write_json(os.path.join(cond_dir, "train_return.json"), train_metrics)
-        _write_json(os.path.join(current_eval_log_dir, "metrics.json"), eval_metrics)
+        _write_json(os.path.join(cond_dir, "train_return.json"), train_result)
+
+        print(f"\nRunning official evaluation for initialization '{init_name}'...")
+        eval_result = run_official_evaluation(
+            train_metrics=train_result,
+            save_dir=save_dir,
+            log_dir=eval_log_dir,
+        )
+        _write_json(os.path.join(eval_log_dir, "metrics.json"), eval_result)
 
         dev_f1_series = _get_series(history, "dev_f1")
         dev_loss_series = _get_series(history, "dev_loss")
         train_loss_series = _get_series(history, "train_loss")
 
-        results[scheduler_name] = {
-            "condition": scheduler_name,
+        results[init_name] = {
+            "condition": init_name,
+            "init_name": init_name,
             "optimizer_name": optimizer_name,
             "scheduler_name": scheduler_name,
-            "best_f1_during_training": train_metrics["best_f1"],
-            "best_em_during_training": train_metrics["best_em"],
-            "best_step_during_training": train_metrics.get("best_step"),
-            "official_eval_f1": eval_metrics["f1"],
-            "official_eval_em": eval_metrics["exact_match"],
-            "official_eval_loss": eval_metrics["loss"],
+            "loss_name": loss_name,
+            "activation": activation,
+            "best_f1_during_training": train_result["best_f1"],
+            "best_em_during_training": train_result["best_em"],
+            "best_step_during_training": train_result.get("best_step"),
+            "official_eval_f1": eval_result["f1"],
+            "official_eval_em": eval_result["exact_match"],
+            "official_eval_loss": eval_result["loss"],
             "first_logged_train_loss": train_loss_series[0] if train_loss_series else None,
             "last_logged_train_loss": train_loss_series[-1] if train_loss_series else None,
             "first_logged_dev_f1": dev_f1_series[0] if dev_f1_series else None,
@@ -223,26 +235,16 @@ def run_experiment2(
             "dev_f1_std": _safe_std(dev_f1_series),
             "dev_loss_std": _safe_std(dev_loss_series),
             "history_path": os.path.join(cond_dir, "history.json"),
-            "checkpoint_path": train_metrics.get("best_ckpt_path", os.path.join(current_save_dir, "best_model.pt")),
-            "last_checkpoint_path": train_metrics.get("ckpt_path", os.path.join(current_save_dir, "model.pt")),
+            "checkpoint_path": train_result.get("best_ckpt_path", os.path.join(save_dir, "best_model.pt")),
+            "last_checkpoint_path": train_result.get("ckpt_path", os.path.join(save_dir, "model.pt")),
         }
-        _write_json(os.path.join(cond_dir, "summary.json"), results[scheduler_name])
-
-    print("\nTraining completed.")
-    print("Aggregate Results:")
-    for scheduler_name, res in results.items():
-        print(
-            f"  {scheduler_name}: Best F1 = {res['best_f1_during_training']:.4f}, "
-            f"Best EM = {res['best_em_during_training']:.4f}, "
-            f"Official Eval F1 = {res['official_eval_f1']:.4f}, "
-            f"Official Eval EM = {res['official_eval_em']:.4f}"
-        )
+        _write_json(os.path.join(cond_dir, "summary.json"), results[init_name])
 
     comparison_rows = []
-    for scheduler_name, item in results.items():
+    for init_name, item in results.items():
         comparison_rows.append(
             {
-                "condition": scheduler_name,
+                "condition": init_name,
                 "best_f1_during_training": item["best_f1_during_training"],
                 "best_em_during_training": item["best_em_during_training"],
                 "best_step_during_training": item["best_step_during_training"],
@@ -270,25 +272,16 @@ def run_experiment2(
             "ordered_conditions": [row["condition"] for row in comparison_rows],
         }
 
-    print_table(
-        "Experiment 2 Results",
-        comparison_rows,
-        DEFAULT_RESULT_COLUMNS,
-    )
-
-    _write_json(os.path.join(output_root, "summary.json"), summary_payload)
-    _write_json(os.path.join(output_root, "histories.json"), histories)
-    _write_json(os.path.join(output_root, "experiment2_results.json"), {
-        "summary": summary_payload,
-        "histories": histories,
-        "comparison_rows": comparison_rows,
-    })
     _write_csv(os.path.join(output_root, "comparison.csv"), comparison_rows)
+    _write_json(os.path.join(output_root, "histories.json"), histories)
+    _write_json(os.path.join(output_root, "summary.json"), summary_payload)
+
+    print_table("Experiment 3 Results", comparison_rows, DEFAULT_RESULT_COLUMNS)
 
     if plot_results:
-        plot_experiment2_results(output_root=output_root, histories=histories)
+        plot_experiment3_results(output_root=output_root, histories=histories)
 
-    print(f"Saved experiment outputs to {output_root}")
+    print(f"\nSaved experiment outputs to {output_root}")
     return {
         "summary": summary_payload,
         "histories": histories,
@@ -297,16 +290,16 @@ def run_experiment2(
     }
 
 
-def plot_experiment2_results(
-    output_root: str = "exp_outputs/experiment2_scheduler",
+def plot_experiment3_results(
+    output_root: str = "exp_outputs/experiment3_init",
     histories: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> None:
     if histories is None:
         histories = read_json(os.path.join(output_root, "histories.json"))
 
     plot_standard_history_bundle(output_root=output_root, histories=histories)
-    print(f"Saved experiment 2 plots to {output_root}")
+    print(f"Saved experiment 3 plots to {output_root}")
 
 
 if __name__ == "__main__":
-    run_experiment2()
+    run_experiment3()
