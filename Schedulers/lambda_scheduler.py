@@ -23,6 +23,20 @@ class LambdaLR(LRScheduler):
         return [base_lr * factor for base_lr in self.base_lrs]
 
 
+class _WarmupInvSqrtLambda:
+    """Picklable callable implementing warmup + inverse-sqrt decay."""
+
+    def __init__(self, peak_lr: float, warmup_steps: int):
+        self.peak_lr = peak_lr
+        self.warmup_steps = warmup_steps
+
+    def __call__(self, step: int) -> float:
+        step = max(1, step)
+        if step <= self.warmup_steps:
+            return self.peak_lr * step / self.warmup_steps
+        return self.peak_lr * (self.warmup_steps ** 0.5) / (step ** 0.5)
+
+
 def make_warmup_lambda(peak_lr: float, warmup_steps: int):
     """Return a warmup + inverse-sqrt decay schedule.
 
@@ -34,10 +48,4 @@ def make_warmup_lambda(peak_lr: float, warmup_steps: int):
     if warmup_steps <= 0:
         raise ValueError(f"warmup_steps must be positive, got {warmup_steps}")
 
-    def lr_lambda(step: int) -> float:
-        step = max(1, step)
-        if step <= warmup_steps:
-            return peak_lr * step / warmup_steps
-        return peak_lr * (warmup_steps ** 0.5) / (step ** 0.5)
-
-    return lr_lambda
+    return _WarmupInvSqrtLambda(peak_lr, warmup_steps)
