@@ -26,7 +26,7 @@ def _experiment3_summary_extra(
 
 def run_experiment3(
     output_root: str = "exp_outputs/experiment3_init",
-    num_steps: int = 60000,
+    num_steps: int = 30000,
     checkpoint: int = 200,
     batch_size: int = 8,
     seed: int = 42,

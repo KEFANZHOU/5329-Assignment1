@@ -23,7 +23,7 @@ def _experiment2_summary_extra(
 
 def run_experiment2(
     output_root: str = "exp_outputs/experiment2_scheduler",
-    num_steps: int = 1000,
+    num_steps: int = 30000,
     checkpoint: int = 200,
     batch_size: int = 8,
     seed: int = 42,
