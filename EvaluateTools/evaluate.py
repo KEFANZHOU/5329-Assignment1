@@ -95,7 +95,7 @@ def evaluate(
     os.makedirs(log_dir, exist_ok=True)
 
     ckpt_path = os.path.join(save_dir, ckpt_name)
-    ckpt = torch.load(ckpt_path, map_location=DEVICE)
+    ckpt = torch.load(ckpt_path, map_location=DEVICE, weights_only=False)
     ckpt_cfg = ckpt.get("config", {})
 
     resolved_loss_name = loss_name if loss_name != "qa_nll" else ckpt_cfg.get("loss_name", loss_name)
