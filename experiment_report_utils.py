@@ -14,6 +14,7 @@ DEFAULT_RESULT_COLUMNS = [
     "official_eval_em",
     "official_eval_loss",
     "best_logged_dev_f1",
+    "grad_norm_std",
 ]
 
 
@@ -132,4 +133,5 @@ def plot_standard_history_bundle(
     plot_metric(histories, "dev_loss", "Dev Loss", os.path.join(output_root, "dev_loss.png"))
     plot_metric(histories, "dev_f1", "Dev F1", os.path.join(output_root, "dev_f1.png"))
     plot_metric(histories, "dev_em", "Dev EM", os.path.join(output_root, "dev_em.png"))
+    plot_metric(histories, "grad_norm", "Gradient Norm", os.path.join(output_root, "grad_norm.png"))
     plot_gap(histories, os.path.join(output_root, "f1_gap.png"))

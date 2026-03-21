@@ -111,6 +111,7 @@ def _build_summary_item(
     dev_loss_series = _get_series(history, "dev_loss")
     train_loss_series = _get_series(history, "train_loss")
     dev_em_series = _get_series(history, "dev_em")
+    grad_norm_series = _get_series(history, "grad_norm")
 
     summary_item = {
         "condition": condition_name,
@@ -134,6 +135,11 @@ def _build_summary_item(
         "first_step_dev_f1_ge_3": _first_step_meeting(history, "dev_f1", 3.0),
         "dev_f1_std": _safe_std(dev_f1_series),
         "dev_loss_std": _safe_std(dev_loss_series),
+        "first_logged_grad_norm": grad_norm_series[0] if grad_norm_series else None,
+        "last_logged_grad_norm": grad_norm_series[-1] if grad_norm_series else None,
+        "min_logged_grad_norm": min(grad_norm_series) if grad_norm_series else None,
+        "max_logged_grad_norm": max(grad_norm_series) if grad_norm_series else None,
+        "grad_norm_std": _safe_std(grad_norm_series),
         "history_path": os.path.join(cond_dir, "history.json"),
         "checkpoint_path": train_result.get("best_ckpt_path", os.path.join(save_dir, "best_model.pt")),
         "last_checkpoint_path": train_result.get("ckpt_path", os.path.join(save_dir, "model.pt")),
@@ -161,6 +167,10 @@ def _build_comparison_rows(summary_items: Dict[str, Dict[str, Any]]) -> List[Dic
                 "first_step_dev_f1_ge_3": item["first_step_dev_f1_ge_3"],
                 "dev_f1_std": item["dev_f1_std"],
                 "dev_loss_std": item["dev_loss_std"],
+                "last_logged_grad_norm": item["last_logged_grad_norm"],
+                "min_logged_grad_norm": item["min_logged_grad_norm"],
+                "max_logged_grad_norm": item["max_logged_grad_norm"],
+                "grad_norm_std": item["grad_norm_std"],
             }
         )
 
