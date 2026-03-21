@@ -11,13 +11,15 @@ from tqdm import tqdm
 
 def train_single_epoch(model, optimizer, scheduler, data_iter,
                        steps, grad_clip, loss_fn, device,
-                       global_step: int = 0) -> float:
+                       global_step: int = 0):
     """
     Run one block of `steps` training iterations consuming from `data_iter`.
-    Returns the mean loss over this block.
+    Returns the mean loss and mean pre-clipping total gradient norm
+    over this block.
     """
     model.train()
     loss_list = []
+    grad_norm_list = []
 
     for _ in tqdm(range(steps), total=steps):
         optimizer.zero_grad(set_to_none=True)
@@ -32,13 +34,18 @@ def train_single_epoch(model, optimizer, scheduler, data_iter,
         loss_list.append(float(loss.item()))
 
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        total_grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        grad_norm_list.append(float(total_grad_norm))
         optimizer.step()
         scheduler.step()
 
     mean_loss = float(np.mean(loss_list))
-    print(f"STEP {global_step + steps:8d}  loss {mean_loss:8f}\n")
-    return mean_loss
+    mean_grad_norm = float(np.mean(grad_norm_list)) if grad_norm_list else 0.0
+    print(
+        f"STEP {global_step + steps:8d}  loss {mean_loss:8f}  "
+        f"grad_norm {mean_grad_norm:8f}\n"
+    )
+    return mean_loss, mean_grad_norm
 
 
 def save_checkpoint(save_dir, ckpt_name, model, optimizer, scheduler,

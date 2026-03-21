@@ -97,7 +97,7 @@ def train(
         best_step : int         — training step of the selected best checkpoint
         history   : list[dict]  — per-checkpoint metrics
             keys: step, train_loss, train_f1, train_em,
-                  dev_loss, dev_f1, dev_em, lr
+                  dev_loss, dev_f1, dev_em, lr, grad_norm
         ckpt_path : str         — absolute path to the latest checkpoint
         best_ckpt_path : str    — absolute path to the best checkpoint
         config    : dict        — full resolved configuration
@@ -157,7 +157,7 @@ def train(
     for step0 in range(0, num_steps, checkpoint):
         steps_this_block = min(checkpoint, num_steps - step0)
 
-        train_loss = train_single_epoch(
+        train_loss, grad_norm = train_single_epoch(
             model, optimizer, scheduler, _train_iter,
             steps_this_block, grad_clip, loss_fn, DEVICE,
             global_step=step0,
@@ -191,6 +191,7 @@ def train(
             "dev_f1":     dv_metrics["f1"],
             "dev_em":     dv_metrics["exact_match"],
             "lr":         current_lr[0] if current_lr else None,
+            "grad_norm":  grad_norm,
         })
 
         dev_f1 = dv_metrics["f1"]
