@@ -7,10 +7,12 @@ import matplotlib.pyplot as plt
 
 DEFAULT_RESULT_COLUMNS = [
     "condition",
+    "seed_count",
     "best_f1_during_training",
     "best_em_during_training",
     "best_step_during_training",
     "official_eval_f1",
+    "official_eval_f1_seed_std",
     "official_eval_em",
     "official_eval_loss",
     "best_logged_dev_f1",

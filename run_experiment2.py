@@ -27,6 +27,7 @@ def run_experiment2(
     checkpoint: int = 200,
     batch_size: int = 8,
     seed: int = 42,
+    seeds: Optional[List[int]] = None,
     early_stop: Optional[int] = None,
     optimizer_name: str = "sgd_momentum",
     loss_name: str = "qa_nll",
@@ -35,6 +36,7 @@ def run_experiment2(
     lr_gamma: float = 0.5,
     plot_results: bool = False,
 ) -> Dict[str, Any]:
+    run_seeds = [seed] if seeds is None else list(seeds)
     if schedulers_to_test is None:
         schedulers_to_test = ["none", "step", "cosine"]
 
@@ -49,7 +51,7 @@ def run_experiment2(
             "batch_size": batch_size,
             "num_steps": num_steps,
             "checkpoint": checkpoint,
-            "seed": seed,
+            "seeds": run_seeds,
             "early_stop": "disabled" if early_stop is None else effective_early_stop,
             "lr_step_size": lr_step_size,
             "lr_gamma": lr_gamma,
@@ -83,7 +85,7 @@ def run_experiment2(
         "num_steps": num_steps,
         "checkpoint": checkpoint,
         "batch_size": batch_size,
-        "seed": seed,
+        "seed": run_seeds[0],
         "early_stop": effective_early_stop,
         "optimizer_name": optimizer_name,
         "loss_name": loss_name,
@@ -97,6 +99,7 @@ def run_experiment2(
         experiment_spec=experiment_spec,
         conditions=conditions,
         base_train_kwargs=base_train_kwargs,
+        seeds=run_seeds,
         plot_results=plot_results,
         result_table_title="Experiment 2 Results",
         bundle_filename="experiment2_results.json",

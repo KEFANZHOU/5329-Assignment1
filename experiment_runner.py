@@ -60,6 +60,80 @@ def _step_of_best(hist: List[Dict[str, Any]], key: str, mode: str = "max") -> Op
     return best_row["step"]
 
 
+def _is_numeric(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _aggregate_histories(histories: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    per_step: Dict[int, Dict[str, List[float]]] = {}
+    for history in histories:
+        for row in history:
+            step = row.get("step")
+            if step is None:
+                continue
+            step_bucket = per_step.setdefault(int(step), {})
+            for key, value in row.items():
+                if key == "step" or not _is_numeric(value):
+                    continue
+                step_bucket.setdefault(key, []).append(float(value))
+
+    aggregated = []
+    for step in sorted(per_step):
+        row: Dict[str, Any] = {"step": step}
+        for key, values in per_step[step].items():
+            if values:
+                row[key] = float(sum(values) / len(values))
+        aggregated.append(row)
+    return aggregated
+
+
+def _aggregate_seed_summaries(
+    condition_name: str,
+    seed_summaries: List[Dict[str, Any]],
+    cond_dir: str,
+) -> Dict[str, Any]:
+    aggregate = dict(seed_summaries[0])
+
+    numeric_keys = set()
+    for item in seed_summaries:
+        for key, value in item.items():
+            if key != "seed" and _is_numeric(value):
+                numeric_keys.add(key)
+
+    for key in numeric_keys:
+        values = [float(item[key]) for item in seed_summaries if key in item and _is_numeric(item[key])]
+        if values:
+            aggregate[key] = float(sum(values) / len(values))
+
+    for key in [
+        "official_eval_f1",
+        "official_eval_em",
+        "best_logged_dev_f1",
+        "best_step_during_training",
+        "last_logged_grad_norm",
+    ]:
+        values = [float(item[key]) for item in seed_summaries if key in item and _is_numeric(item[key])]
+        aggregate[f"{key}_seed_std"] = _safe_std(values)
+
+    aggregate["condition"] = condition_name
+    aggregate["seed_count"] = len(seed_summaries)
+    aggregate["seeds"] = [item["seed"] for item in seed_summaries]
+    aggregate.pop("seed", None)
+    aggregate.pop("seed_dir", None)
+    aggregate["history_path"] = os.path.join(cond_dir, "history.json")
+    aggregate["seed_histories_path"] = os.path.join(cond_dir, "seed_histories.json")
+    aggregate["seed_summaries_path"] = os.path.join(cond_dir, "seed_summaries.json")
+    aggregate["checkpoint_path"] = None
+    aggregate["last_checkpoint_path"] = None
+    aggregate["seed_checkpoint_paths"] = {
+        str(item["seed"]): item.get("checkpoint_path") for item in seed_summaries
+    }
+    aggregate["seed_last_checkpoint_paths"] = {
+        str(item["seed"]): item.get("last_checkpoint_path") for item in seed_summaries
+    }
+    return aggregate
+
+
 def run_official_evaluation(
     train_metrics: Dict[str, Any],
     save_dir: str,
@@ -171,6 +245,10 @@ def _build_comparison_rows(summary_items: Dict[str, Dict[str, Any]]) -> List[Dic
                 "min_logged_grad_norm": item["min_logged_grad_norm"],
                 "max_logged_grad_norm": item["max_logged_grad_norm"],
                 "grad_norm_std": item["grad_norm_std"],
+                "seed_count": item.get("seed_count"),
+                "official_eval_f1_seed_std": item.get("official_eval_f1_seed_std"),
+                "official_eval_em_seed_std": item.get("official_eval_em_seed_std"),
+                "best_logged_dev_f1_seed_std": item.get("best_logged_dev_f1_seed_std"),
             }
         )
 
@@ -187,15 +265,20 @@ def run_experiment_suite(
     experiment_spec: Dict[str, Any],
     conditions: Dict[str, ConditionConfig],
     base_train_kwargs: Dict[str, Any],
+    seeds: Optional[List[int]] = None,
     plot_results: bool = False,
     result_table_title: Optional[str] = None,
     bundle_filename: Optional[str] = None,
     summary_extra_fn: Optional[SummaryExtraFn] = None,
 ) -> Dict[str, Any]:
     output_root = _mkdir(output_root)
+    run_seeds = list(seeds) if seeds is not None else [int(base_train_kwargs.get("seed", 42))]
+    if not run_seeds:
+        raise ValueError("seeds must contain at least one value")
     _write_json(os.path.join(output_root, "experiment_spec.json"), experiment_spec)
 
     all_histories: Dict[str, List[Dict[str, Any]]] = {}
+    all_seed_histories: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     summary_items: Dict[str, Dict[str, Any]] = {}
 
     for condition_name, condition_kwargs in conditions.items():
@@ -204,56 +287,136 @@ def run_experiment_suite(
         print("=" * 80)
 
         cond_dir = _mkdir(os.path.join(output_root, condition_name))
-        save_dir = _mkdir(os.path.join(cond_dir, "checkpoints"))
-        train_log_dir = _mkdir(os.path.join(cond_dir, "train_logs"))
-        eval_log_dir = _mkdir(os.path.join(cond_dir, "official_eval"))
+        if len(run_seeds) == 1:
+            seed = run_seeds[0]
+            save_dir = _mkdir(os.path.join(cond_dir, "checkpoints"))
+            train_log_dir = _mkdir(os.path.join(cond_dir, "train_logs"))
+            eval_log_dir = _mkdir(os.path.join(cond_dir, "official_eval"))
 
-        train_kwargs = dict(base_train_kwargs)
-        train_kwargs.update(condition_kwargs)
-        train_result = train(
-            save_dir=save_dir,
-            log_dir=train_log_dir,
-            ckpt_name="model.pt",
-            **train_kwargs,
-        )
-
-        history = train_result.get("history", [])
-        all_histories[condition_name] = history
-
-        _write_json(os.path.join(cond_dir, "history.json"), history)
-        _write_csv(os.path.join(cond_dir, "history.csv"), history)
-        _write_json(os.path.join(cond_dir, "train_return.json"), train_result)
-
-        print(f"\nRunning official evaluation for condition '{condition_name}'...")
-        eval_result = run_official_evaluation(
-            train_metrics=train_result,
-            save_dir=save_dir,
-            log_dir=eval_log_dir,
-        )
-        _write_json(os.path.join(eval_log_dir, "metrics.json"), eval_result)
-
-        extra_fields = None
-        if summary_extra_fn is not None:
-            extra_fields = summary_extra_fn(
-                condition_name,
-                condition_kwargs,
-                train_kwargs,
-                train_result,
-                eval_result,
-                history,
-                cond_dir,
-                save_dir,
+            train_kwargs = dict(base_train_kwargs)
+            train_kwargs.update(condition_kwargs)
+            train_kwargs["seed"] = seed
+            train_result = train(
+                save_dir=save_dir,
+                log_dir=train_log_dir,
+                ckpt_name="model.pt",
+                **train_kwargs,
             )
 
-        summary_item = _build_summary_item(
-            condition_name=condition_name,
-            history=history,
-            train_result=train_result,
-            eval_result=eval_result,
-            cond_dir=cond_dir,
-            save_dir=save_dir,
-            extra_fields=extra_fields,
-        )
+            history = train_result.get("history", [])
+            all_histories[condition_name] = history
+
+            _write_json(os.path.join(cond_dir, "history.json"), history)
+            _write_csv(os.path.join(cond_dir, "history.csv"), history)
+            _write_json(os.path.join(cond_dir, "train_return.json"), train_result)
+
+            print(f"\nRunning official evaluation for condition '{condition_name}'...")
+            eval_result = run_official_evaluation(
+                train_metrics=train_result,
+                save_dir=save_dir,
+                log_dir=eval_log_dir,
+            )
+            _write_json(os.path.join(eval_log_dir, "metrics.json"), eval_result)
+
+            extra_fields = None
+            if summary_extra_fn is not None:
+                extra_fields = summary_extra_fn(
+                    condition_name,
+                    condition_kwargs,
+                    train_kwargs,
+                    train_result,
+                    eval_result,
+                    history,
+                    cond_dir,
+                    save_dir,
+                )
+
+            summary_item = _build_summary_item(
+                condition_name=condition_name,
+                history=history,
+                train_result=train_result,
+                eval_result=eval_result,
+                cond_dir=cond_dir,
+                save_dir=save_dir,
+                extra_fields=extra_fields,
+            )
+            summary_items[condition_name] = summary_item
+            _write_json(os.path.join(cond_dir, "summary.json"), summary_item)
+            continue
+
+        seed_histories: Dict[str, List[Dict[str, Any]]] = {}
+        seed_summaries: List[Dict[str, Any]] = []
+
+        for seed in run_seeds:
+            seed_name = f"seed_{seed}"
+            seed_dir = _mkdir(os.path.join(cond_dir, seed_name))
+            save_dir = _mkdir(os.path.join(seed_dir, "checkpoints"))
+            train_log_dir = _mkdir(os.path.join(seed_dir, "train_logs"))
+            eval_log_dir = _mkdir(os.path.join(seed_dir, "official_eval"))
+
+            print(f"\nRunning seed {seed} for condition '{condition_name}'...")
+            train_kwargs = dict(base_train_kwargs)
+            train_kwargs.update(condition_kwargs)
+            train_kwargs["seed"] = seed
+            train_result = train(
+                save_dir=save_dir,
+                log_dir=train_log_dir,
+                ckpt_name="model.pt",
+                **train_kwargs,
+            )
+
+            history = train_result.get("history", [])
+            seed_histories[seed_name] = history
+
+            _write_json(os.path.join(seed_dir, "history.json"), history)
+            _write_csv(os.path.join(seed_dir, "history.csv"), history)
+            _write_json(os.path.join(seed_dir, "train_return.json"), train_result)
+
+            print(f"\nRunning official evaluation for condition '{condition_name}' (seed {seed})...")
+            eval_result = run_official_evaluation(
+                train_metrics=train_result,
+                save_dir=save_dir,
+                log_dir=eval_log_dir,
+            )
+            _write_json(os.path.join(eval_log_dir, "metrics.json"), eval_result)
+
+            extra_fields = None
+            if summary_extra_fn is not None:
+                extra_fields = summary_extra_fn(
+                    condition_name,
+                    condition_kwargs,
+                    train_kwargs,
+                    train_result,
+                    eval_result,
+                    history,
+                    seed_dir,
+                    save_dir,
+                )
+
+            seed_summary = _build_summary_item(
+                condition_name=condition_name,
+                history=history,
+                train_result=train_result,
+                eval_result=eval_result,
+                cond_dir=seed_dir,
+                save_dir=save_dir,
+                extra_fields=extra_fields,
+            )
+            seed_summary["seed"] = seed
+            seed_summary["seed_dir"] = seed_dir
+            seed_summaries.append(seed_summary)
+            _write_json(os.path.join(seed_dir, "summary.json"), seed_summary)
+
+        aggregated_history = _aggregate_histories(list(seed_histories.values()))
+        all_histories[condition_name] = aggregated_history
+        all_seed_histories[condition_name] = seed_histories
+
+        _write_json(os.path.join(cond_dir, "history.json"), aggregated_history)
+        _write_csv(os.path.join(cond_dir, "history.csv"), aggregated_history)
+        _write_json(os.path.join(cond_dir, "seed_histories.json"), seed_histories)
+        _write_json(os.path.join(cond_dir, "seed_summaries.json"), seed_summaries)
+
+        summary_item = _aggregate_seed_summaries(condition_name, seed_summaries, cond_dir)
         summary_items[condition_name] = summary_item
         _write_json(os.path.join(cond_dir, "summary.json"), summary_item)
 
@@ -268,16 +431,18 @@ def run_experiment_suite(
 
     _write_csv(os.path.join(output_root, "comparison.csv"), comparison_rows)
     _write_json(os.path.join(output_root, "histories.json"), all_histories)
+    if all_seed_histories:
+        _write_json(os.path.join(output_root, "seed_histories.json"), all_seed_histories)
     _write_json(os.path.join(output_root, "summary.json"), summary_payload)
     if bundle_filename is not None:
-        _write_json(
-            os.path.join(output_root, bundle_filename),
-            {
-                "summary": summary_payload,
-                "histories": all_histories,
-                "comparison_rows": comparison_rows,
-            },
-        )
+        bundle_payload = {
+            "summary": summary_payload,
+            "histories": all_histories,
+            "comparison_rows": comparison_rows,
+        }
+        if all_seed_histories:
+            bundle_payload["seed_histories"] = all_seed_histories
+        _write_json(os.path.join(output_root, bundle_filename), bundle_payload)
 
     print_table(result_table_title or f"{title} Results", comparison_rows, DEFAULT_RESULT_COLUMNS)
 
@@ -290,4 +455,5 @@ def run_experiment_suite(
         "histories": all_histories,
         "comparison_rows": comparison_rows,
         "output_root": output_root,
+        "seed_histories": all_seed_histories if all_seed_histories else None,
     }

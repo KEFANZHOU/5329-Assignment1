@@ -33,6 +33,7 @@ def run_experiment1_norm_in_assignment(
     checkpoint: int = 200,
     batch_size: int = 8,
     seed: int = 42,
+    seeds: Optional[List[int]] = None,
     early_stop: Optional[int] = None,
     optimizer_name: str = "adam",
     scheduler_name: str = "none",
@@ -44,6 +45,7 @@ def run_experiment1_norm_in_assignment(
     Experiment 1:
     Compare LayerNorm vs GroupNorm under the same optimizer, scheduler, and training budget.
     """
+    run_seeds = [seed] if seeds is None else list(seeds)
     effective_early_stop = num_steps if early_stop is None else early_stop
 
     experiment_spec = {
@@ -65,7 +67,7 @@ def run_experiment1_norm_in_assignment(
             "batch_size": batch_size,
             "num_steps": num_steps,
             "checkpoint": checkpoint,
-            "seed": seed,
+            "seeds": run_seeds,
             "early_stop": "disabled" if early_stop is None else effective_early_stop,
             "same_official_eval": True,
             "same_data": True,
@@ -109,7 +111,7 @@ def run_experiment1_norm_in_assignment(
         "num_steps": num_steps,
         "batch_size": batch_size,
         "checkpoint": checkpoint,
-        "seed": seed,
+        "seed": run_seeds[0],
         "early_stop": effective_early_stop,
         "optimizer_name": optimizer_name,
         "scheduler_name": scheduler_name,
@@ -122,6 +124,7 @@ def run_experiment1_norm_in_assignment(
         experiment_spec=experiment_spec,
         conditions=conditions,
         base_train_kwargs=base_train_kwargs,
+        seeds=run_seeds,
         plot_results=plot_results,
         result_table_title="Experiment 1 Results",
         summary_extra_fn=_experiment1_summary_extra,

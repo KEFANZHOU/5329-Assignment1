@@ -30,6 +30,7 @@ def run_experiment3(
     checkpoint: int = 200,
     batch_size: int = 8,
     seed: int = 42,
+    seeds: Optional[List[int]] = None,
     early_stop: Optional[int] = None,
     optimizer_name: str = "adam",
     scheduler_name: str = "lambda",
@@ -38,6 +39,7 @@ def run_experiment3(
     init_names: Optional[List[str]] = None,
     plot_results: bool = False,
 ) -> Dict[str, Any]:
+    run_seeds = [seed] if seeds is None else list(seeds)
     if init_names is None:
         init_names = ["kaiming", "xavier"]
 
@@ -59,7 +61,7 @@ def run_experiment3(
             "batch_size": batch_size,
             "num_steps": num_steps,
             "checkpoint": checkpoint,
-            "seed": seed,
+            "seeds": run_seeds,
             "early_stop": "disabled" if early_stop is None else effective_early_stop,
             "same_official_eval": True,
             "same_data": True,
@@ -94,7 +96,7 @@ def run_experiment3(
         "num_steps": num_steps,
         "checkpoint": checkpoint,
         "batch_size": batch_size,
-        "seed": seed,
+        "seed": run_seeds[0],
         "early_stop": effective_early_stop,
         "optimizer_name": optimizer_name,
         "scheduler_name": scheduler_name,
@@ -108,6 +110,7 @@ def run_experiment3(
         experiment_spec=experiment_spec,
         conditions=conditions,
         base_train_kwargs=base_train_kwargs,
+        seeds=run_seeds,
         plot_results=plot_results,
         result_table_title="Experiment 3 Results",
         summary_extra_fn=_experiment3_summary_extra,
