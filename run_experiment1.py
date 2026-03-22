@@ -21,7 +21,7 @@ def _experiment1_summary_extra(
     }
 
 
-def run_experiment1_norm_in_assignment(
+def run_experiment1(
     output_root: str = "exp_outputs/experiment1_norm",
     train_npz: str = "_data/train.npz",
     dev_npz: str = "_data/dev.npz",
@@ -130,7 +130,6 @@ def run_experiment1_norm_in_assignment(
         summary_extra_fn=_experiment1_summary_extra,
     )
 
-
 def plot_experiment1_results(
     output_root: str = "exp_outputs/experiment1_norm",
     histories: Optional[Dict[str, List[Dict[str, Any]]]] = None,
@@ -143,4 +142,4 @@ def plot_experiment1_results(
 
 
 if __name__ == "__main__":
-    run_experiment1_norm_in_assignment()
+    run_experiment1()
