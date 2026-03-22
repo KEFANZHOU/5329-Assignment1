@@ -36,7 +36,7 @@ def run_experiment1(
     seeds: Optional[List[int]] = None,
     early_stop: Optional[int] = None,
     optimizer_name: str = "adam",
-    scheduler_name: str = "none",
+    scheduler_name: str = "lambda",
     loss_name: str = "qa_ce",
     norm_groups: int = 8,
     plot_results: bool = False,
