@@ -37,7 +37,7 @@ def run_experiment1(
     early_stop: Optional[int] = None,
     optimizer_name: str = "adam",
     scheduler_name: str = "lambda",
-    loss_name: str = "qa_ce",
+    loss_name: str = "qa_nll",
     norm_groups: int = 8,
     plot_results: bool = False,
 ) -> Dict[str, Any]:

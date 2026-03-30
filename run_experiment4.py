@@ -33,7 +33,7 @@ def run_experiment4(
     early_stop: Optional[int] = None,
     optimizer_name: str = "adam",
     scheduler_name: str = "lambda",
-    loss_name: str = "qa_ce",
+    loss_name: str = "qa_nll",
     activations_to_test: Optional[List[str]] = None,
     plot_results: bool = False,
 ) -> Dict[str, Any]:

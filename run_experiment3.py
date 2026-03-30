@@ -34,7 +34,7 @@ def run_experiment3(
     early_stop: Optional[int] = None,
     optimizer_name: str = "adam",
     scheduler_name: str = "lambda",
-    loss_name: str = "qa_ce",
+    loss_name: str = "qa_nll",
     activation: str = "relu",
     init_names: Optional[List[str]] = None,
     plot_results: bool = False,
@@ -82,7 +82,7 @@ def run_experiment3(
             "step_of_best_logged_dev_f1",
         ],
         "notes": {
-            "project_loss_name_for_cross_entropy": "qa_ce",
+            "project_loss_name_for_cross_entropy": "qa_nll",
             "compared_initializations": init_names,
         },
     }
