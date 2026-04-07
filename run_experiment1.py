@@ -29,7 +29,7 @@ def run_experiment1(
     char_emb_json: str = "_data/char_emb.json",
     train_eval_json: str = "_data/train_eval.json",
     dev_eval_json: str = "_data/dev_eval.json",
-    num_steps: int = 30000,
+    num_steps: int = 20000,
     checkpoint: int = 200,
     batch_size: int = 8,
     seed: int = 42,

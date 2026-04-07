@@ -41,7 +41,7 @@ def train(
 
     # ── Training loop ─────────────────────────────────────────────────────────
     batch_size:         int   = 8,
-    num_steps:          int   = 60000,
+    num_steps:          int   = 20000,
     checkpoint:         int   = 200,
     val_num_batches:    int   = 150,
     test_num_batches:   int   = 150,
@@ -61,7 +61,7 @@ def train(
     beta1:              float = 0.8,
     beta2:              float = 0.999,
     eps:                float = 1e-7,
-    weight_decay:       float = 3e-7,
+    weight_decay:       float = 1e-5,
     momentum:           float = 0.9,    # SGD / SGDMomentum
 
     # ── Scheduler hyperparameters ─────────────────────────────────────────────
@@ -77,7 +77,7 @@ def train(
     num_heads:          int   = 8,
     glove_dim:          int   = 300,
     char_dim:           int   = 64,
-    dropout:            float = 0.1,
+    dropout:            float = 0.2,
     dropout_char:       float = 0.05,
     pretrained_char:    bool  = False,
 
