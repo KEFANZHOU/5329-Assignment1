@@ -16,16 +16,15 @@ def _experiment2_summary_extra(
     save_dir: str,
 ) -> Dict[str, Any]:
     return {
-        "init_name": condition_kwargs["init_name"],
+        "activation": condition_kwargs["activation"],
         "optimizer_name": train_kwargs["optimizer_name"],
         "scheduler_name": train_kwargs["scheduler_name"],
         "loss_name": train_kwargs["loss_name"],
-        "activation": train_kwargs["activation"],
     }
 
 
 def run_experiment2(
-    output_root: str = "exp_outputs/experiment2_init",
+    output_root: str = "exp_outputs/experiment2_activation",
     num_steps: int = 20000,
     checkpoint: int = 200,
     batch_size: int = 8,
@@ -35,29 +34,32 @@ def run_experiment2(
     optimizer_name: str = "adam",
     scheduler_name: str = "lambda",
     loss_name: str = "qa_nll",
-    activation: str = "relu",
-    init_names: Optional[List[str]] = None,
+    activations_to_test: Optional[List[str]] = None,
     plot_results: bool = False,
 ) -> Dict[str, Any]:
     run_seeds = [seed] if seeds is None else list(seeds)
-    if init_names is None:
-        init_names = ["kaiming", "xavier"]
+    if activations_to_test is None:
+        activations_to_test = ["relu", "leaky_relu"]
 
     effective_early_stop = num_steps if early_stop is None else early_stop
 
     experiment_spec = {
-        "title": "Experiment 2: Effect of Weight Initialization",
+        "title": "Experiment 2: Effect of Activation Function",
         "research_question": (
-            "With activation, optimizer, scheduler, loss, and all other hyperparameters fixed, "
-            "does Kaiming initialization or Xavier initialization lead to better training dynamics "
-            "and final QA performance?"
+            "With optimizer, scheduler, loss, normalization, initialization, and all other "
+            "hyperparameters fixed, does the choice of activation function (ReLU vs LeakyReLU) "
+            "affect training dynamics and final QA performance?"
         ),
-        "conditions": init_names,
+        "hypothesis": (
+            "LeakyReLU may mitigate the dying-neuron problem of standard ReLU, "
+            "potentially leading to more stable gradients and marginally better performance, "
+            "especially in deeper encoder blocks."
+        ),
+        "conditions": activations_to_test,
         "controlled_variables": {
             "optimizer_name": optimizer_name,
             "scheduler_name": scheduler_name,
             "loss_name": loss_name,
-            "activation": activation,
             "batch_size": batch_size,
             "num_steps": num_steps,
             "checkpoint": checkpoint,
@@ -75,21 +77,24 @@ def run_experiment2(
             "official_eval_f1",
             "official_eval_em",
             "official_eval_loss",
+            "train_f1_minus_dev_f1",
             "dev_f1_std",
             "dev_loss_std",
             "first_step_dev_f1_ge_1",
             "first_step_dev_f1_ge_3",
             "step_of_best_logged_dev_f1",
         ],
-        "notes": {
-            "project_loss_name_for_cross_entropy": "qa_nll",
-            "compared_initializations": init_names,
-        },
+        "analysis_focus": [
+            "Whether LeakyReLU avoids dead neurons and improves gradient flow",
+            "Which activation converges faster in early training",
+            "Which activation achieves higher final Dev F1 / EM",
+            "Whether the difference is in optimization dynamics or final generalization",
+        ],
     }
 
     conditions = {
-        init_name: {"init_name": init_name}
-        for init_name in init_names
+        act_name: {"activation": act_name}
+        for act_name in activations_to_test
     }
 
     base_train_kwargs = {
@@ -101,7 +106,6 @@ def run_experiment2(
         "optimizer_name": optimizer_name,
         "scheduler_name": scheduler_name,
         "loss_name": loss_name,
-        "activation": activation,
     }
 
     return run_experiment_suite(
@@ -118,7 +122,7 @@ def run_experiment2(
 
 
 def plot_experiment2_results(
-    output_root: str = "exp_outputs/experiment2_init",
+    output_root: str = "exp_outputs/experiment2_activation",
     histories: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> None:
     if histories is None:
